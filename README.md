@@ -64,6 +64,7 @@ Here is the table of contents for this current document:
 		+ [Postgres SSL](#postgres-ssl)
 		+ [AWS RDS](#aws-rds)
 		+ [Postgres Password Plugin](#postgres-password-plugin)
+			- [Azure Workload Identity](#azure-workload-identity)
 	* [Hybrid](#hybrid)
 - [Key Normalization](#key-normalization)
 - [Basic Functions](#basic-functions)
@@ -1006,6 +1007,37 @@ The default plugin timeout is 30 seconds.  You can customize it with `passwordPl
 ```
 
 For production, consider preinstalling the plugin and pointing `passwordPlugin` at the installed executable.  This avoids starting `npx` and checking the NPM registry whenever the cached password expires.
+
+#### Azure Workload Identity
+
+[Azure Database for PostgreSQL Flexible Server](https://learn.microsoft.com/en-us/azure/postgresql/flexible-server/concepts-azure-ad-authentication) supports Azure AD (Entra) authentication, which lets pods connect without a static password.  When running in an AKS cluster with the [Azure Workload Identity webhook](https://azure.github.io/azure-workload-identity/docs/) installed, the necessary environment variables and token file are injected automatically into the pod.
+
+pixl-server-storage ships a ready-made plugin script for this at `plugins/azure-workload-identity.js`.  Point `passwordPlugin` at it:
+
+```json
+{
+	"engine": "Postgres",
+	"Postgres": {
+		"host": "mypg.postgres.database.azure.com",
+		"database": "mydb",
+		"user": "my-app-service-principal",
+		"ssl": true,
+		"passwordPlugin": "node node_modules/pixl-server-storage/plugins/azure-workload-identity.js"
+	}
+}
+```
+
+The following environment variables must be present (the Workload Identity webhook injects them automatically):
+
+| Variable | Description |
+|----------|-------------|
+| `AZURE_TENANT_ID` | Azure tenant ID |
+| `AZURE_CLIENT_ID` | Client (app) ID of the managed identity or app registration |
+| `AZURE_FEDERATED_TOKEN_FILE` | Path to the projected service account token file |
+
+The `user` value must match the Azure AD display name of the identity that has been granted access to the PostgreSQL database (e.g. via `CREATE ROLE "my-app-service-principal" WITH LOGIN;` followed by the appropriate grants).
+
+The plugin returns a `ttl` derived from the token's `expires_in` field (with a 5-minute safety margin), so pixl-server-storage caches the token and only re-invokes the plugin when it expires.  No additional npm packages are required — the plugin uses Node's built-in `https` module.
 
 See [S3 Cache](#s3-cache) for details on the `cache` section, as Postgres works in the same way.
 
